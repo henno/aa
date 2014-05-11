@@ -1,10 +1,10 @@
 /
 
 Search Documentation:  ____________________ Search
-Home (/) → Documentation (/docs) → Manuals (/docs/manuals) → PostgreSQL 8.2 (/docs/8.2/static/index.html)
-This page in other versions: 8.4 (/docs/8.4/static/sql-createfunction.html) / 9.0 (/docs/9.0/static/sql-createfunction.html) / 9.1 (/docs/9.1/static/sql-createfunction.html) / 9.2 (/docs/9.2/static/sql-createfunction.html) / 9.3 (/docs/9.3/static/sql-createfunction.html)  |  Development versions: devel (/docs/devel/static/sql-createfunction.html)  |  Unsupported versions: 7.1 (/docs/7.1/static/sql-createfunction.html) / 7.2 (/docs/7.2/static/sql-createfunction.html) / 7.3 (/docs/7.3/static/sql-createfunction.html) / 7.4 (/docs/7.4/static/sql-createfunction.html) / 8.0 (/docs/8.0/static/sql-createfunction.html) / 8.1 (/docs/8.1/static/sql-createfunction.html) / 8.2 / 8.3 (/docs/8.3/static/sql-createfunction.html)
-PostgreSQL 8.2.23 Documentation
-Prev (sql-createdomain.html) Fast Backward (sql-createdomain.html) Fast Forward (sql-creategroup.html) Next (sql-creategroup.html)
+Home (/) → Documentation (/docs) → Manuals (/docs/manuals) → PostgreSQL 9.1 (/docs/9.1/static/index.html)
+This page in other versions: 8.4 (/docs/8.4/static/sql-createfunction.html) / 9.0 (/docs/9.0/static/sql-createfunction.html) / 9.1 / 9.2 (/docs/9.2/static/sql-createfunction.html) / 9.3 (/docs/9.3/static/sql-createfunction.html)  |  Development versions: devel (/docs/devel/static/sql-createfunction.html)  |  Unsupported versions: 7.1 (/docs/7.1/static/sql-createfunction.html) / 7.2 (/docs/7.2/static/sql-createfunction.html) / 7.3 (/docs/7.3/static/sql-createfunction.html) / 7.4 (/docs/7.4/static/sql-createfunction.html) / 8.0 (/docs/8.0/static/sql-createfunction.html) / 8.1 (/docs/8.1/static/sql-createfunction.html) / 8.2 (/docs/8.2/static/sql-createfunction.html) / 8.3 (/docs/8.3/static/sql-createfunction.html)
+PostgreSQL 9.1.13 Documentation (index.html)
+Prev (sql-createforeigntable.html) Up (sql-commands.html) Next (sql-creategroup.html)
 ------------------------------------------------------------
 
 
@@ -20,12 +20,17 @@ CREATE FUNCTION -- define a new function
 ** Synopsis
 ------------------------------------------------------------
 CREATE [ OR REPLACE ] FUNCTION
-name ( [ [ argmode ] [ argname ] argtype [, ...] ] )
-[ RETURNS rettype ]
-{ LANGUAGE langname
+name ( [ [ argmode ] [ argname ] argtype [ { DEFAULT | = } default_expr ] [, ...] ] )
+[ RETURNS rettype
+| RETURNS TABLE ( column_name column_type [, ...] ) ]
+{ LANGUAGE lang_name
+| WINDOW
 | IMMUTABLE | STABLE | VOLATILE
 | CALLED ON NULL INPUT | RETURNS NULL ON NULL INPUT | STRICT
 | [ EXTERNAL ] SECURITY INVOKER | [ EXTERNAL ] SECURITY DEFINER
+| COST execution_cost
+| ROWS result_rows
+| SET configuration_parameter { TO value | = value | FROM CURRENT }
 | AS 'definition'
 | AS 'obj_file', 'link_symbol'
 } ...
@@ -35,13 +40,15 @@ name ( [ [ argmode ] [ argname ] argtype [, ...] ] )
 ** Description
 ------------------------------------------------------------
 
-CREATE FUNCTION defines a new function. CREATE OR REPLACE FUNCTION will either create a new function, or replace an existing definition.
+CREATE FUNCTION defines a new function. CREATE OR REPLACE FUNCTION will either create a new function, or replace an existing definition. To be able to define a function, the user must have the USAGE privilege on the language.
 
-If a schema name is included, then the function is created in the specified schema. Otherwise it is created in the current schema. The name of the new function must not match any existing function with the same argument types in the same schema. However, functions of different argument types may share a name (this is called overloading).
+If a schema name is included, then the function is created in the specified schema. Otherwise it is created in the current schema. The name of the new function must not match any existing function with the same input argument types in the same schema. However, functions of different argument types can share a name (this is called overloading).
 
-To update the definition of an existing function, use CREATE OR REPLACE FUNCTION. It is not possible to change the name or argument types of a function this way (if you tried, you would actually be creating a new, distinct function). Also, CREATE OR REPLACE FUNCTION will not let you change the return type of an existing function. To do that, you must drop and recreate the function. (When using OUT parameters, that means you can't change the names or types of any OUT parameters except by dropping the function.)
+To replace the current definition of an existing function, use CREATE OR REPLACE FUNCTION. It is not possible to change the name or argument types of a function this way (if you tried, you would actually be creating a new, distinct function). Also, CREATE OR REPLACE FUNCTION will not let you change the return type of an existing function. To do that, you must drop and recreate the function. (When using OUT parameters, that means you cannot change the types of any OUT parameters except by dropping the function.)
 
-If you drop and then recreate a function, the new function is not the same entity as the old; you will have to drop existing rules, views, triggers, etc. that refer to the old function. Use CREATE OR REPLACE FUNCTION to change a function definition without breaking objects that refer to the function.
+When CREATE OR REPLACE FUNCTION is used to replace an existing function, the ownership and permissions of the function do not change. All other function properties are assigned the values specified or implied in the command. You must own the function to replace it (this includes being a member of the owning role).
+
+If you drop and then recreate a function, the new function is not the same entity as the old; you will have to drop existing rules, views, triggers, etc. that refer to the old function. Use CREATE OR REPLACE FUNCTION to change a function definition without breaking objects that refer to the function. Also, ALTER FUNCTION can be used to change most of the auxiliary properties of an existing function.
 
 The user that creates the function becomes the owner of the function.
 
@@ -53,42 +60,54 @@ name
 The name (optionally schema-qualified) of the function to create.
 
 argmode
-The mode of an argument: either IN, OUT, or INOUT. If omitted, the default is IN.
+The mode of an argument: IN, OUT, INOUT, or VARIADIC. If omitted, the default is IN. Only OUT arguments can follow a VARIADIC one. Also, OUT and INOUT arguments cannot be used together with the RETURNS TABLE notation.
 
 argname
-The name of an argument. Some languages (currently only PL/pgSQL) let you use the name in the function body. For other languages the name of an input argument is just extra documentation. But the name of an output argument is significant, since it defines the column name in the result row type. (If you omit the name for an output argument, the system will choose a default column name.)
+The name of an argument. Some languages (including PL/pgSQL, but currently not SQL) let you use the name in the function body. For other languages the name of an input argument is just extra documentation, so far as the function itself is concerned; but you can use input argument names when calling a function to improve readability (see Section 4.3 (sql-syntax-calling-funcs.html) ). In any case, the name of an output argument is significant, because it defines the column name in the result row type. (If you omit the name for an output argument, the system will choose a default column name.)
 
 argtype
-The data type(s) of the function's arguments (optionally schema-qualified), if any. The argument types may be base, composite, or domain types, or may reference the type of a table column.
+The data type(s) of the function's arguments (optionally schema-qualified), if any. The argument types can be base, composite, or domain types, or can reference the type of a table column.
 
-Depending on the implementation language it may also be allowed to specify "pseudotypes" such as cstring. Pseudotypes indicate that the actual argument type is either incompletely specified, or outside the set of ordinary SQL data types.
+Depending on the implementation language it might also be allowed to specify "pseudotypes" such as cstring. Pseudotypes indicate that the actual argument type is either incompletely specified, or outside the set of ordinary SQL data types.
 
-The type of a column is referenced by writing tablename.columnname%TYPE. Using this feature can sometimes help make a function independent of changes to the definition of a table.
+The type of a column is referenced by writing table_name.column_name%TYPE. Using this feature can sometimes help make a function independent of changes to the definition of a table.
+
+default_expr
+An expression to be used as default value if the parameter is not specified. The expression has to be coercible to the argument type of the parameter. Only input (including INOUT) parameters can have a default value. All input parameters following a parameter with a default value must have default values as well.
 
 rettype
-The return data type (optionally schema-qualified). The return type may be a base, composite, or domain type, or may reference the type of a table column. Depending on the implementation language it may also be allowed to specify "pseudotypes" such as cstring. If the function is not supposed to return a value, specify void as the return type.
+The return data type (optionally schema-qualified). The return type can be a base, composite, or domain type, or can reference the type of a table column. Depending on the implementation language it might also be allowed to specify "pseudotypes" such as cstring. If the function is not supposed to return a value, specify void as the return type.
 
-When there are OUT or INOUT parameters, the RETURNS clause may be omitted. If present, it must agree with the result type implied by the output parameters: RECORD if there are multiple output parameters, or the same type as the single output parameter.
+When there are OUT or INOUT parameters, the RETURNS clause can be omitted. If present, it must agree with the result type implied by the output parameters: RECORD if there are multiple output parameters, or the same type as the single output parameter.
 
 The SETOF modifier indicates that the function will return a set of items, rather than a single item.
 
-The type of a column is referenced by writing tablename.columnname%TYPE.
+The type of a column is referenced by writing table_name.column_name%TYPE.
 
-langname
-The name of the language that the function is implemented in. May be SQL, C, internal, or the name of a user-defined procedural language. For backward compatibility, the name may be enclosed by single quotes.
+column_name
+The name of an output column in the RETURNS TABLE syntax. This is effectively another way of declaring a named OUT parameter, except that RETURNS TABLE also implies RETURNS SETOF.
+
+column_type
+The data type of an output column in the RETURNS TABLE syntax.
+
+lang_name
+The name of the language that the function is implemented in. Can be SQL, C, internal, or the name of a user-defined procedural language. For backward compatibility, the name can be enclosed by single quotes.
+
+WINDOW
+WINDOW indicates that the function is a window function rather than a plain function. This is currently only useful for functions written in C. The WINDOW attribute cannot be changed when replacing an existing function definition.
 
 IMMUTABLE
 STABLE
 VOLATILE
-These attributes inform the query optimizer about the behavior of the function. At most one choice may be specified. If none of these appear, VOLATILE is the default assumption.
+These attributes inform the query optimizer about the behavior of the function. At most one choice can be specified. If none of these appear, VOLATILE is the default assumption.
 
 IMMUTABLE indicates that the function cannot modify the database and always returns the same result when given the same argument values; that is, it does not do database lookups or otherwise use information not directly present in its argument list. If this option is given, any call of the function with all-constant arguments can be immediately replaced with the function value.
 
-STABLE indicates that the function cannot modify the database, and that within a single table scan it will consistently return the same result for the same argument values, but that its result could change across SQL statements. This is the appropriate selection for functions whose results depend on database lookups, parameter variables (such as the current time zone), etc. Also note that the current_timestamp family of functions qualify as stable, since their values do not change within a transaction.
+STABLE indicates that the function cannot modify the database, and that within a single table scan it will consistently return the same result for the same argument values, but that its result could change across SQL statements. This is the appropriate selection for functions whose results depend on database lookups, parameter variables (such as the current time zone), etc. (It is inappropriate for AFTER triggers that wish to query rows modified by the current command.) Also note that the current_timestamp family of functions qualify as stable, since their values do not change within a transaction.
 
 VOLATILE indicates that the function value can change even within a single table scan, so no optimizations can be made. Relatively few database functions are volatile in this sense; some examples are random(), currval(), timeofday(). But note that any function that has side-effects must be classified volatile, even if its result is quite predictable, to prevent calls from being optimized away; an example is setval().
 
-For additional details see Section 33.6 (xfunc-volatility.html) .
+For additional details see Section 35.6 (xfunc-volatility.html) .
 
 CALLED ON NULL INPUT
 RETURNS NULL ON NULL INPUT
@@ -103,14 +122,32 @@ SECURITY INVOKER indicates that the function is to be executed with the privileg
 
 The key word EXTERNAL is allowed for SQL conformance, but it is optional since, unlike in SQL, this feature applies to all functions not only external ones.
 
+execution_cost
+A positive number giving the estimated execution cost for the function, in units of cpu_operator_cost (runtime-config-query.html#GUC-CPU-OPERATOR-COST) . If the function returns a set, this is the cost per returned row. If the cost is not specified, 1 unit is assumed for C-language and internal functions, and 100 units for functions in all other languages. Larger values cause the planner to try to avoid evaluating the function more often than necessary.
+
+result_rows
+A positive number giving the estimated number of rows that the planner should expect the function to return. This is only allowed when the function is declared to return a set. The default assumption is 1000 rows.
+
+configuration_parameter
+value
+The SET clause causes the specified configuration parameter to be set to the specified value when the function is entered, and then restored to its prior value when the function exits. SET FROM CURRENT saves the session's current value of the parameter as the value to be applied when the function is entered.
+
+If a SET clause is attached to a function, then the effects of a SET LOCAL command executed inside the function for the same variable are restricted to the function: the configuration parameter's prior value is still restored at function exit. However, an ordinary SET command (without LOCAL) overrides the SET clause, much as it would do for a previous SET LOCAL command: the effects of such a command will persist after function exit, unless the current transaction is rolled back.
+
+See SET (sql-set.html) and Chapter 18 (runtime-config.html) for more information about allowed parameter names and values.
+
 definition
-A string constant defining the function; the meaning depends on the language. It may be an internal function name, the path to an object file, an SQL command, or text in a procedural language.
+A string constant defining the function; the meaning depends on the language. It can be an internal function name, the path to an object file, an SQL command, or text in a procedural language.
+
+It is often helpful to use dollar quoting (see Section 4.1.2.4 (sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING) ) to write the function definition string, rather than the normal single quote syntax. Without dollar quoting, any single quotes or backslashes in the function definition must be escaped by doubling them.
 
 obj_file, link_symbol
 This form of the AS clause is used for dynamically loadable C language functions when the function name in the C language source code is not the same as the name of the SQL function. The string obj_file is the name of the file containing the dynamically loadable object, and link_symbol is the function's link symbol, that is, the name of the function in the C language source code. If the link symbol is omitted, it is assumed to be the same as the name of the SQL function being defined.
 
+When repeated CREATE FUNCTION calls refer to the same object file, the file is only loaded once per session. To unload and reload the file (perhaps during development), start a new session.
+
 attribute
-The historical way to specify optional pieces of information about the function. The following attributes may appear here:
+The historical way to specify optional pieces of information about the function. The following attributes can appear here:
 
 isStrict
 Equivalent to STRICT or RETURNS NULL ON NULL INPUT.
@@ -120,35 +157,39 @@ isCachable is an obsolete equivalent of IMMUTABLE; it's still accepted for backw
 
 Attribute names are not case-sensitive.
 
+Refer to Section 35.3 (xfunc.html) for further information on writing functions.
 
-** Notes
+
+** Overloading
 ------------------------------------------------------------
 
-Refer to Section 33.3 (xfunc.html) for further information on writing functions.
-
-The full SQL type syntax is allowed for input arguments and return value. However, some details of the type specification (e.g., the precision field for type numeric) are the responsibility of the underlying function implementation and are silently swallowed (i.e., not recognized or enforced) by the CREATE FUNCTION command.
-
-PostgreSQL allows function overloading; that is, the same name can be used for several different functions so long as they have distinct argument types. However, the C names of all functions must be different, so you must give overloaded C functions different C names (for example, use the argument types as part of the C names).
+PostgreSQL allows function overloading; that is, the same name can be used for several different functions so long as they have distinct input argument types. However, the C names of all functions must be different, so you must give overloaded C functions different C names (for example, use the argument types as part of the C names).
 
 Two functions are considered the same if they have the same names and input argument types, ignoring any OUT parameters. Thus for example these declarations conflict:
 CREATE FUNCTION foo(int) ...
 CREATE FUNCTION foo(int, out text) ...
 
-When repeated CREATE FUNCTION calls refer to the same object file, the file is only loaded once per session. To unload and reload the file (perhaps during development), start a new session.
+Functions that have different argument type lists will not be considered to conflict at creation time, but if defaults are provided they might conflict in use. For example, consider
+CREATE FUNCTION foo(int) ...
+CREATE FUNCTION foo(int, int default 42) ...
 
-Use DROP FUNCTION (sql-dropfunction.html) to remove user-defined functions.
+A call foo(10) will fail due to the ambiguity about which function should be called.
 
-It is often helpful to use dollar quoting (see Section 4.1.2.2 (sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING) ) to write the function definition string, rather than the normal single quote syntax. Without dollar quoting, any single quotes or backslashes in the function definition must be escaped by doubling them.
 
-To be able to define a function, the user must have the USAGE privilege on the language.
+** Notes
+------------------------------------------------------------
 
-When CREATE OR REPLACE FUNCTION is used to replace an existing function, the ownership and permissions of the function do not change. All other function properties are assigned the values specified or implied in the command. You must own the function to replace it (this includes being a member of the owning role).
+The full SQL type syntax is allowed for declaring a function's arguments and return value. However, parenthesized type modifiers (e.g., the precision field for type numeric) are discarded by CREATE FUNCTION. Thus for example CREATE FUNCTION foo (varchar(10)) ... is exactly the same as CREATE FUNCTION foo (varchar) ....
+
+When replacing an existing function with CREATE OR REPLACE FUNCTION, there are restrictions on changing parameter names. You cannot change the name already assigned to any input parameter (although you can add names to parameters that had none before). If there is more than one output parameter, you cannot change the names of the output parameters, because that would change the column names of the anonymous composite type that describes the function's result. These restrictions are made to ensure that existing calls of the function do not stop working when it is replaced.
+
+If a function is declared STRICT with a VARIADIC argument, the strictness check tests that the variadic array as a whole is non-null. The function will still be called if the array has null elements.
 
 
 ** Examples
 ------------------------------------------------------------
 
-Here are some trivial examples to help you get started. For more information and examples, see Section 33.3 (xfunc.html) .
+Here are some trivial examples to help you get started. For more information and examples, see Section 35.3 (xfunc.html) .
 CREATE FUNCTION add(integer, integer) RETURNS integer
 AS 'select  + ;'
 LANGUAGE SQL
@@ -178,6 +219,15 @@ LANGUAGE SQL;
 
 SELECT * FROM dup(42);
 
+Another way to return multiple columns is to use a TABLE function:
+CREATE FUNCTION dup(int) RETURNS TABLE(f1 int, f2 text)
+AS $$ SELECT  CAST( AS text) || ' is text' $$
+LANGUAGE SQL;
+
+SELECT * FROM dup(42);
+
+However, a TABLE function is different from the preceding examples, because it actually returns a set of records, not just one record.
+
 
 ** Writing SECURITY DEFINER Functions Safely
 ------------------------------------------------------------
@@ -186,28 +236,26 @@ Because a SECURITY DEFINER function is executed with the privileges of the user 
 CREATE FUNCTION check_password(uname TEXT, pass TEXT)
 RETURNS BOOLEAN AS $$
 DECLARE passed BOOLEAN;
-old_path TEXT;
 BEGIN
--- Save old search_path; notice we must qualify current_setting
--- to ensure we invoke the right function
-old_path := pg_catalog.current_setting('search_path');
-
--- Set a secure search_path: trusted schemas, then 'pg_temp'.
--- We set is_local = true so that the old value will be restored
--- in event of an error before we reach the function end.
-PERFORM pg_catalog.set_config('search_path', 'admin, pg_temp', true);
-
--- Do whatever secure work we came for.
 SELECT  (pwd = ) INTO passed
 FROM    pwds
 WHERE   username = ;
 
--- Restore caller's search_path
-PERFORM pg_catalog.set_config('search_path', old_path, true);
-
 RETURN passed;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$  LANGUAGE plpgsql
+SECURITY DEFINER
+-- Set a secure search_path: trusted schema(s), then 'pg_temp'.
+SET search_path = admin, pg_temp;
+
+Before PostgreSQL version 8.3, the SET option was not available, and so older functions may contain rather complicated logic to save, set, and restore search_path. The SET option is far easier to use for this purpose.
+
+Another point to keep in mind is that by default, execute privilege is granted to PUBLIC for newly created functions (see GRANT (sql-grant.html) for more information). Frequently you will wish to restrict use of a security definer function to only some users. To do that, you must revoke the default PUBLIC privileges and then grant execute privilege selectively. To avoid having a window where the new function is accessible to all, create it and set the privileges within a single transaction. For example:
+BEGIN;
+CREATE FUNCTION check_password(uname TEXT, pass TEXT) ... SECURITY DEFINER;
+REVOKE ALL ON FUNCTION check_password(uname TEXT, pass TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION check_password(uname TEXT, pass TEXT) TO admins;
+COMMIT;
 
 
 ** Compatibility
@@ -217,12 +265,14 @@ A CREATE FUNCTION command is defined in SQL:1999 and later. The PostgreSQL versi
 
 For compatibility with some other database systems, argmode can be written either before or after argname. But only the first way is standard-compliant.
 
+The SQL standard does not specify parameter defaults. The syntax with the DEFAULT key word is from Oracle, and it is somewhat in the spirit of the standard: SQL/PSM uses it for variable default values. The syntax with = is used in T-SQL and Firebird.
+
 
 ** See Also
 ------------------------------------------------------------
 ALTER FUNCTION (sql-alterfunction.html) , DROP FUNCTION (sql-dropfunction.html) , GRANT (sql-grant.html) , LOAD (sql-load.html) , REVOKE (sql-revoke.html) , createlang (app-createlang.html)
 ------------------------------------------------------------
-Prev (sql-createdomain.html) Home (index.html)      Next (sql-creategroup.html)
-CREATE DOMAIN                Up (sql-commands.html)                 CREATE GROUP
+Prev (sql-createforeigntable.html) Home (index.html)      Next (sql-creategroup.html)
+CREATE FOREIGN TABLE               Up (sql-commands.html)                 CREATE GROUP
 Privacy Policy (/about/privacypolicy) | About PostgreSQL (/about/)
 Copyright © 1996-2014 The PostgreSQL Global Development Group
